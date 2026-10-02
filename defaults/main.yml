@@ -1,8 +1,12 @@
 ---
 pulsar_relay_version: "v0.2.1"
+pulsar_relay_service_name: galaxy-pulsar-relay
+pulsar_relay_bind: 127.0.0.1
 pulsar_relay_port: 9000
-pulsar_relay_user: ubuntu
-pulsar_relay_venv: /opt/pulsar-relay/venv
+pulsar_relay_user: pulsar-relay
+pulsar_relay_home: /opt/pulsar-relay
+pulsar_relay_venv: "{{ pulsar_relay_home }}/venv"
+pulsar_relay_env_file: "/etc/{{ pulsar_relay_service_name }}.env"
 pulsar_relay_jwt_secret: "change_me_in_production"
 pulsar_relay_admin_username: "admin"
 pulsar_relay_admin_password: "change_me_in_production"
@@ -12,7 +16,11 @@ pulsar_relay_log_level: "INFO"
 pulsar_relay_valkey_host: "localhost"
 pulsar_relay_valkey_port: 6379
 
+# Set to false when Valkey comes from another role (e.g. usegalaxy-eu.valkey)
+pulsar_relay_manage_valkey: true
+
 # --- v0.2.0 hardening (override secrets at deploy time) ---
 pulsar_relay_valkey_password: "CHANGE_ME"
 pulsar_relay_allowed_origins: '["https://usegalaxy.eu"]'
+# Set to the public hostname in production, e.g. '["relay.example.org"]'
 pulsar_relay_trusted_hosts: '["*"]'

@@ -1,7 +1,23 @@
 ---
 - name: Set up storage backend (OS-specific)
-  include_tasks: "backend-{{ ansible_os_family | lower }}.yml"
-  when: pulsar_relay_storage_backend == "valkey"
+  include_tasks: "backend-{{ ansible_facts.os_family | lower }}.yml"
+  when:
+    - pulsar_relay_storage_backend == "valkey"
+    - pulsar_relay_manage_valkey | bool
+
+# relay 0.2.x needs XRANGE exclusive bounds (Valkey/Redis >= 6.2), whoever installs it
+- name: Read local Valkey/Redis server version
+  shell: (valkey-server --version 2>/dev/null || redis-server --version) | grep -oE 'v=[0-9]+\.[0-9]+' | cut -d= -f2
+  register: pulsar_relay_kv_version
+  changed_when: false
+  when: pulsar_relay_valkey_host in ['localhost', '127.0.0.1']
+
+- name: Assert Valkey/Redis >= 6.2
+  assert:
+    that: pulsar_relay_kv_version.stdout is version('6.2', '>=')
+    fail_msg: "pulsar-relay 0.2.x needs Valkey/Redis >= 6.2, found '{{ pulsar_relay_kv_version.stdout }}'"
+    quiet: true
+  when: pulsar_relay_kv_version is not skipped
 
 - name: Install Python3 and venv (Debian/Ubuntu)
   apt:
@@ -11,7 +27,7 @@
       - python3-pip
     state: present
     update_cache: yes
-  when: ansible_os_family == "Debian"
+  when: ansible_facts.os_family == "Debian"
 
 - name: Install Python3 and pip (RedHat/Rocky)
   dnf:
@@ -20,14 +36,32 @@
       - python3-pip
       - git
     state: present
-  when: ansible_os_family == "RedHat"
+  when: ansible_facts.os_family == "RedHat"
 
-- name: Create pulsar-relay venv directory
+- name: Create pulsar-relay system group
+  group:
+    name: "{{ pulsar_relay_user }}"
+    system: true
+
+- name: Create pulsar-relay system user
+  user:
+    name: "{{ pulsar_relay_user }}"
+    group: "{{ pulsar_relay_user }}"
+    system: true
+    home: "{{ pulsar_relay_home }}"
+    create_home: false
+    shell: /sbin/nologin
+
+- name: Create pulsar-relay directories
   file:
-    path: "{{ pulsar_relay_venv }}"
+    path: "{{ item }}"
     state: directory
     owner: "{{ pulsar_relay_user }}"
+    group: "{{ pulsar_relay_user }}"
     mode: "0755"
+  loop:
+    - "{{ pulsar_relay_home }}"
+    - "{{ pulsar_relay_venv }}"
 
 - name: Install pulsar-relay from GitHub
   pip:
@@ -35,29 +69,57 @@
     virtualenv: "{{ pulsar_relay_venv }}"
     virtualenv_command: python3 -m venv
   become_user: "{{ pulsar_relay_user }}"
+  notify: restart pulsar-relay
+
+# Migration from the pre-rename unit; its env file holds secrets
+- name: Check for the old pulsar-relay unit
+  stat:
+    path: /etc/systemd/system/pulsar-relay.service
+  register: pulsar_relay_old_unit
+  when: pulsar_relay_service_name != 'pulsar-relay'
+
+- name: Stop and disable the old pulsar-relay unit
+  systemd:
+    name: pulsar-relay
+    state: stopped
+    enabled: false
+  when:
+    - pulsar_relay_old_unit is not skipped
+    - pulsar_relay_old_unit.stat.exists
+
+- name: Remove the old unit file and env file
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/pulsar-relay.service
+    - /etc/pulsar-relay.env
+  when:
+    - pulsar_relay_old_unit is not skipped
+    - pulsar_relay_old_unit.stat.exists
+  notify: reload systemd
 
 - name: Deploy pulsar-relay environment file
   template:
     src: pulsar-relay.env.j2
-    dest: /etc/pulsar-relay.env
+    dest: "{{ pulsar_relay_env_file }}"
     owner: root
     group: root
     mode: "0600"
-  notify:
-    - reload systemd
-    - restart pulsar-relay
+  notify: restart pulsar-relay
 
 - name: Deploy systemd service
   template:
     src: pulsar-relay.service.j2
-    dest: /etc/systemd/system/pulsar-relay.service
+    dest: "/etc/systemd/system/{{ pulsar_relay_service_name }}.service"
     owner: root
     group: root
     mode: "0644"
-  notify: reload systemd
+  notify: restart pulsar-relay
 
 - name: Enable and start pulsar-relay
   systemd:
-    name: pulsar-relay
+    name: "{{ pulsar_relay_service_name }}"
     enabled: true
     state: started
+    daemon_reload: true
