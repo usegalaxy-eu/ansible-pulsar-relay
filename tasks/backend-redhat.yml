@@ -6,11 +6,7 @@
     name: valkey
     state: present
 
-# appendonly: relay users and topics live only in Valkey, so a crash must not
-# lose them. On an existing instance with data, enable it at runtime first
-# (CONFIG SET appendonly yes) before applying this, or Valkey may start from
-# an empty AOF and ignore dump.rdb.
-- name: Configure valkey password, localhost bind and persistence
+- name: Configure valkey password and localhost bind
   blockinfile:
     path: /etc/valkey/valkey.conf
     marker: "# {mark} pulsar-relay managed"
@@ -18,8 +14,21 @@
       bind 127.0.0.1
       protected-mode yes
       requirepass {{ pulsar_relay_valkey_password }}
-      appendonly yes
-      appendfsync everysec
+  notify: restart valkey
+
+# appendonly: relay users and topics live only in Valkey, so a crash must not
+# lose them. On an existing instance with data, enable it at runtime first
+# (CONFIG SET appendonly yes) before applying this, or Valkey may start from
+# an empty AOF and ignore dump.rdb. Edits the package default lines in place
+# so the file has one appendonly setting, not two.
+- name: Enable valkey append-only persistence
+  lineinfile:
+    path: /etc/valkey/valkey.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^appendonly ', line: 'appendonly yes' }
+    - { regexp: '^appendfsync ', line: 'appendfsync everysec' }
   notify: restart valkey
 
 - name: Enable and start valkey

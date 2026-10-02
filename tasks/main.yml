@@ -5,6 +5,20 @@
     - pulsar_relay_storage_backend == "valkey"
     - pulsar_relay_manage_valkey | bool
 
+# relay 0.2.x needs XRANGE exclusive bounds (Valkey/Redis >= 6.2), whoever installs it
+- name: Read local Valkey/Redis server version
+  shell: (valkey-server --version 2>/dev/null || redis-server --version) | grep -oE 'v=[0-9]+\.[0-9]+' | cut -d= -f2
+  register: pulsar_relay_kv_version
+  changed_when: false
+  when: pulsar_relay_valkey_host in ['localhost', '127.0.0.1']
+
+- name: Assert Valkey/Redis >= 6.2
+  assert:
+    that: pulsar_relay_kv_version.stdout is version('6.2', '>=')
+    fail_msg: "pulsar-relay 0.2.x needs Valkey/Redis >= 6.2, found '{{ pulsar_relay_kv_version.stdout }}'"
+    quiet: true
+  when: pulsar_relay_kv_version is not skipped
+
 - name: Install Python3 and venv (Debian/Ubuntu)
   apt:
     name:
@@ -56,6 +70,34 @@
     virtualenv_command: python3 -m venv
   become_user: "{{ pulsar_relay_user }}"
   notify: restart pulsar-relay
+
+# Migration from the pre-rename unit; its env file holds secrets
+- name: Check for the old pulsar-relay unit
+  stat:
+    path: /etc/systemd/system/pulsar-relay.service
+  register: pulsar_relay_old_unit
+  when: pulsar_relay_service_name != 'pulsar-relay'
+
+- name: Stop and disable the old pulsar-relay unit
+  systemd:
+    name: pulsar-relay
+    state: stopped
+    enabled: false
+  when:
+    - pulsar_relay_old_unit is not skipped
+    - pulsar_relay_old_unit.stat.exists
+
+- name: Remove the old unit file and env file
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/pulsar-relay.service
+    - /etc/pulsar-relay.env
+  when:
+    - pulsar_relay_old_unit is not skipped
+    - pulsar_relay_old_unit.stat.exists
+  notify: reload systemd
 
 - name: Deploy pulsar-relay environment file
   template:
