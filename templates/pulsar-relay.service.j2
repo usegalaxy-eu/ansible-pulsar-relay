@@ -1,13 +1,19 @@
 [Unit]
 Description=Pulsar Relay
-After=network.target
+After=network-online.target valkey.service
+Wants=network-online.target
 
 [Service]
 User={{ pulsar_relay_user }}
-EnvironmentFile=/etc/pulsar-relay.env
-ExecStart={{ pulsar_relay_venv }}/bin/uvicorn pulsar_relay.main:app --host 0.0.0.0 --port {{ pulsar_relay_port }}
+Group={{ pulsar_relay_user }}
+EnvironmentFile={{ pulsar_relay_env_file }}
+ExecStart={{ pulsar_relay_venv }}/bin/uvicorn pulsar_relay.main:app --host {{ pulsar_relay_bind }} --port {{ pulsar_relay_port }}
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target

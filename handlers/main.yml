@@ -10,7 +10,7 @@
 
 - name: restart pulsar-relay
   systemd:
-    name: pulsar-relay
+    name: "{{ pulsar_relay_service_name }}"
     state: restarted
     daemon_reload: true
 

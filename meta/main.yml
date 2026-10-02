@@ -9,6 +9,9 @@ galaxy_info:
     - name: Ubuntu
       versions:
         - jammy
+    - name: EL
+      versions:
+        - "10"
   galaxy_tags:
     - galaxy
     - pulsar
