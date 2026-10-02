@@ -1,6 +1,6 @@
 ---
 - name: Set up storage backend (OS-specific)
-  include_tasks: "backend-{{ ansible_os_family | lower }}.yml"
+  include_tasks: "backend-{{ ansible_facts.os_family | lower }}.yml"
   when:
     - pulsar_relay_storage_backend == "valkey"
     - pulsar_relay_manage_valkey | bool
@@ -13,7 +13,7 @@
       - python3-pip
     state: present
     update_cache: yes
-  when: ansible_os_family == "Debian"
+  when: ansible_facts.os_family == "Debian"
 
 - name: Install Python3 and pip (RedHat/Rocky)
   dnf:
@@ -22,7 +22,7 @@
       - python3-pip
       - git
     state: present
-  when: ansible_os_family == "RedHat"
+  when: ansible_facts.os_family == "RedHat"
 
 - name: Create pulsar-relay system group
   group:
