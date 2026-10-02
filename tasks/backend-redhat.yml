@@ -1,12 +1,16 @@
 ---
 # Rocky/RHEL 10 ships Valkey 8.x in AppStream (modern, has XRANGE exclusive
-# bounds). No PPA/snap needed. Verified on Rocky Linux 10.2 + Valkey 8.0.9.
+# bounds). No PPA/snap needed. Verified on Rocky Linux 10.2 + Valkey 8.0.11.
 - name: Install valkey (from AppStream)
   dnf:
     name: valkey
     state: present
 
-- name: Configure valkey password and localhost bind
+# appendonly: relay users and topics live only in Valkey, so a crash must not
+# lose them. On an existing instance with data, enable it at runtime first
+# (CONFIG SET appendonly yes) before applying this, or Valkey may start from
+# an empty AOF and ignore dump.rdb.
+- name: Configure valkey password, localhost bind and persistence
   blockinfile:
     path: /etc/valkey/valkey.conf
     marker: "# {mark} pulsar-relay managed"
@@ -14,6 +18,8 @@
       bind 127.0.0.1
       protected-mode yes
       requirepass {{ pulsar_relay_valkey_password }}
+      appendonly yes
+      appendfsync everysec
   notify: restart valkey
 
 - name: Enable and start valkey
