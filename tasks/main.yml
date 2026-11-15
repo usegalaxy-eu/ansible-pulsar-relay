@@ -123,3 +123,9 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Create relay users
+  include_tasks: users.yml
+  when:
+    - pulsar_relay_users | length > 0
+    - not ansible_check_mode

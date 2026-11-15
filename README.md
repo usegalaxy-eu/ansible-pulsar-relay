@@ -13,6 +13,7 @@ inbound ports and no AMQP broker.
 - Installs Valkey (snap) when the Valkey backend is selected
 - Installs Python 3 + venv and pulsar-relay into a virtualenv
 - Renders and enables the `pulsar-relay` systemd unit
+- Creates the relay accounts listed in `pulsar_relay_users`
 
 ## Role variables
 
@@ -36,7 +37,35 @@ See `defaults/main.yml`. Override at least the secrets:
 | `pulsar_relay_allowed_origins` | `["https://usegalaxy.eu"]` | |
 | `pulsar_relay_trusted_hosts` | `["*"]` | set to the public hostname |
 
+| `pulsar_relay_users` | `[]` | relay accounts to create, see below |
+| `pulsar_relay_users_default_permissions` | `[read, write]` | for entries without `permissions` |
+| `pulsar_relay_users_update_password` | `false` | also set passwords of existing users |
+| `pulsar_relay_api_url` | `http://127.0.0.1:<port>` | how the role reaches the relay (from the relay host) |
+| `pulsar_relay_api_host` | first non-wildcard trusted host | `Host` header for those calls |
+
 > Supply real secrets via the vault / extra-vars.
+
+## Relay accounts
+
+Each Pulsar logs in to the relay with its own account. List them and the role
+creates the missing ones through the relay API, logged in as the admin:
+
+```yaml
+pulsar_relay_users:
+  - username: nemo-3dtrees
+    password: "{{ vault_pulsar_nemo_3dtrees_relay_password }}"
+    # permissions: [read, write]   # default; never give a Pulsar admin
+```
+
+- create-only: existing users are not changed, users that aren't listed are
+  never touched (the relay also has OIDC / BYOC accounts)
+- the list is what you rebuild from if Valkey loses its data
+- rotating a password: change it in the vault and run once with
+  `-e pulsar_relay_users_update_password=true` (always reports changed, the
+  relay doesn't hand out hashes to compare)
+- one admin login per run (`/auth/login` allows 5/minute per client); its
+  tokens are revoked at the end
+- skipped in check mode
 
 ## Example
 
