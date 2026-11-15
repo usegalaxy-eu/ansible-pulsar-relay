@@ -1,0 +1,143 @@
+---
+# Make sure every account in pulsar_relay_users exists on the relay, through
+# the relay's own API (so passwords are hashed by the relay, not by us).
+#
+# Create-only: users that already exist are left alone, and users that are not
+# listed are never touched (the relay also holds OIDC / BYOC accounts).
+# Set pulsar_relay_users_update_password to push the listed passwords to
+# existing users as well.
+#
+# One admin login per run. /auth/login is rate limited (5/minute per client
+# address), so existence is checked with GET /auth/users, not by logging in
+# as every user.
+
+- name: Check pulsar_relay_users
+  assert:
+    that:
+      - pulsar_relay_users | selectattr('username', 'undefined') | list | length == 0
+      - pulsar_relay_users | selectattr('password', 'undefined') | list | length == 0
+      - pulsar_relay_users | map(attribute='username') | map('length') | min >= 3
+      - pulsar_relay_users | map(attribute='password') | map('string') | map('length') | min >= 8
+      - _names | unique | length == _names | length
+      - pulsar_relay_admin_username not in _names
+      - _perms | difference(['read', 'write', 'admin']) | length == 0
+    fail_msg: >-
+      every pulsar_relay_users entry needs a unique username (3+ chars, not the
+      admin) and a password (8+ chars); permissions may only be read, write, admin
+    quiet: true
+  vars:
+    _names: "{{ pulsar_relay_users | map(attribute='username') | list }}"
+    _perms: "{{ pulsar_relay_users | map(attribute='permissions', default=pulsar_relay_users_default_permissions) | flatten | list }}"
+
+# The bootstrap admin password is only re-read when the relay starts
+- name: Restart the relay now if its config changed
+  meta: flush_handlers
+
+- name: Wait for the relay API
+  uri:
+    url: "{{ pulsar_relay_api_url }}/ready"
+    headers:
+      Host: "{{ pulsar_relay_api_host }}"
+  register: pulsar_relay_ready
+  until: pulsar_relay_ready.status == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Log in as the relay admin
+  uri:
+    url: "{{ pulsar_relay_api_url }}/auth/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      username: "{{ pulsar_relay_admin_username }}"
+      password: "{{ pulsar_relay_admin_password }}"
+    headers:
+      Host: "{{ pulsar_relay_api_host }}"
+  register: pulsar_relay_admin_login
+  changed_when: false
+  no_log: true
+
+- name: Create missing users, then log the admin out
+  vars:
+    _auth_headers:
+      Host: "{{ pulsar_relay_api_host }}"
+      Authorization: "Bearer {{ pulsar_relay_admin_login.json.access_token }}"
+  block:
+    - name: List existing relay users
+      uri:
+        url: "{{ pulsar_relay_api_url }}/auth/users"
+        headers: "{{ _auth_headers }}"
+      register: pulsar_relay_existing
+      changed_when: false
+      no_log: true
+
+    - name: Note existing usernames
+      set_fact:
+        pulsar_relay_existing_ids: "{{ pulsar_relay_existing.json | items2dict(key_name='username', value_name='user_id') }}"
+
+    - name: Create relay users
+      uri:
+        url: "{{ pulsar_relay_api_url }}/auth/register"
+        method: POST
+        body_format: json
+        body: >-
+          {{ {'username': item.username,
+              'password': item.password | string,
+              'permissions': item.permissions | default(pulsar_relay_users_default_permissions)}
+             | combine({'email': item.email} if item.email is defined else {}) }}
+        headers: "{{ _auth_headers }}"
+        status_code: 201
+      loop: "{{ pulsar_relay_users | rejectattr('username', 'in', pulsar_relay_existing_ids) | list }}"
+      loop_control:
+        label: "{{ item.username }}"
+      changed_when: true
+      no_log: true
+
+    - name: Set passwords of existing relay users
+      uri:
+        url: "{{ pulsar_relay_api_url }}/auth/users/{{ pulsar_relay_existing_ids[item.username] }}"
+        method: PATCH
+        body_format: json
+        body:
+          password: "{{ item.password | string }}"
+        headers: "{{ _auth_headers }}"
+      loop: "{{ pulsar_relay_users | selectattr('username', 'in', pulsar_relay_existing_ids) | list }}"
+      loop_control:
+        label: "{{ item.username }}"
+      # the relay never returns hashes, so a password change can't be detected
+      changed_when: true
+      no_log: true
+      when: pulsar_relay_users_update_password | bool
+
+    - name: Report created relay users
+      debug:
+        msg: "created: {{ _created | join(', ') if _created else 'none' }}"
+      vars:
+        _created: "{{ pulsar_relay_users | map(attribute='username') | reject('in', pulsar_relay_existing_ids) | list }}"
+
+  always:
+    - name: Revoke the admin refresh token
+      uri:
+        url: "{{ pulsar_relay_api_url }}/auth/token/revoke"
+        method: POST
+        body_format: json
+        body:
+          refresh_token: "{{ pulsar_relay_admin_login.json.refresh_token }}"
+          revoke_chain: true
+        headers:
+          Host: "{{ pulsar_relay_api_host }}"
+        status_code: 204
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Log the admin access token out
+      uri:
+        url: "{{ pulsar_relay_api_url }}/auth/logout"
+        method: POST
+        headers: "{{ _auth_headers }}"
+        status_code: 204
+      changed_when: false
+      failed_when: false
+      no_log: true

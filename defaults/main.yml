@@ -24,3 +24,18 @@ pulsar_relay_valkey_password: "CHANGE_ME"
 pulsar_relay_allowed_origins: '["https://usegalaxy.eu"]'
 # Set to the public hostname in production, e.g. '["relay.example.org"]'
 pulsar_relay_trusted_hosts: '["*"]'
+
+# --- relay accounts (one per Pulsar), created through the relay API ---
+# - username: nemo-3dtrees
+#   password: "{{ vault_pulsar_nemo_3dtrees_relay_password }}"
+#   permissions: [read, write]   # optional, default below
+#   email: ops@example.org       # optional
+pulsar_relay_users: []
+pulsar_relay_users_default_permissions: [read, write]
+# Existing users are left alone. true = also set their password from the list
+# (reports changed on every run, the relay can't tell if it differs)
+pulsar_relay_users_update_password: false
+# Where the role talks to the relay: from the relay host itself, not via the proxy
+pulsar_relay_api_url: "http://{{ '127.0.0.1' if pulsar_relay_bind in ['0.0.0.0', '::', 'localhost'] else pulsar_relay_bind }}:{{ pulsar_relay_port }}"
+# Host header for those calls; has to pass PULSAR_TRUSTED_HOSTS
+pulsar_relay_api_host: "{{ (pulsar_relay_trusted_hosts if pulsar_relay_trusted_hosts is not string else pulsar_relay_trusted_hosts | from_json) | reject('search', '\\*') | first | default('127.0.0.1', true) }}"
